@@ -1,228 +1,196 @@
-"""Main entrypoint for the conversational retrieval graph.
+# src/retrieval_graph/graph.py
+import os
+import sys
+from typing import Dict, List
+from dotenv import load_dotenv
+from openai import OpenAI
+from langchain_community.retrievers import BM25Retriever
+from langchain_core.documents import Document
+from langchain_core.runnables import RunnableLambda
+from langchain_core.messages import SystemMessage, HumanMessage
+# Import sentence_transformers for reranking
+from sentence_transformers import CrossEncoder
 
-This module defines the core structure and functionality of the conversational
-retrieval graph. It includes the main graph definition, state management,
-and key functions for processing & routing user queries, generating research plans to answer user questions,
-conducting research, and formulating responses.
-"""
+# Add src directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+if src_dir not in sys.path:
+    sys.path.insert(0, os.path.dirname(src_dir))  # Add project root directory
 
-from typing import Any, Literal, TypedDict, cast
+# Now using absolute import
+from src.core.prompts import build_prompt
 
-from langchain_core.messages import BaseMessage
-from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, StateGraph
-
-from retrieval_graph.configuration import AgentConfiguration
-from retrieval_graph.researcher_graph.graph import graph as researcher_graph
-from retrieval_graph.state import AgentState, InputState, Router
-from shared.utils import format_docs, load_chat_model
-
-
-async def analyze_and_route_query(
-    state: AgentState, *, config: RunnableConfig
-) -> dict[str, Router]:
-    """Analyze the user's query and determine the appropriate routing.
-
-    This function uses a language model to classify the user's query and decide how to route it
-    within the conversation flow.
-
-    Args:
-        state (AgentState): The current state of the agent, including conversation history.
-        config (RunnableConfig): Configuration with the model used for query analysis.
-
-    Returns:
-        dict[str, Router]: A dictionary containing the 'router' key with the classification result (classification type and logic).
-    """
-    configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.query_model)
-    messages = [
-        {"role": "system", "content": configuration.router_system_prompt}
-    ] + state.messages
-    response = cast(
-        Router, await model.with_structured_output(Router).ainvoke(messages)
-    )
-    return {"router": response}
-
-
-def route_query(
-    state: AgentState,
-) -> Literal["create_research_plan", "ask_for_more_info", "respond_to_general_query"]:
-    """Determine the next step based on the query classification.
-
-    Args:
-        state (AgentState): The current state of the agent, including the router's classification.
-
-    Returns:
-        Literal["create_research_plan", "ask_for_more_info", "respond_to_general_query"]: The next step to take.
-
-    Raises:
-        ValueError: If an unknown router type is encountered.
-    """
-    _type = state.router["type"]
-    if _type == "langchain":
-        return "create_research_plan"
-    elif _type == "more-info":
-        return "ask_for_more_info"
-    elif _type == "general":
-        return "respond_to_general_query"
+# Load environment variables from .env file (using correct absolute path)
+def load_env():
+    """Load environment variables using absolute path to ensure correct loading"""
+    # Get project root directory
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    root_dir = os.path.dirname(module_dir)
+    env_path = os.path.join(root_dir, '.env')
+    
+    print(f"Attempting to load environment variables from: {env_path}")
+    # Force reload environment variables
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            for line in f:
+                if line.strip() and not line.startswith('#'):
+                    try:
+                        key, value = line.strip().split('=', 1)
+                        os.environ[key] = value.strip('"').strip("'")
+                    except ValueError:
+                        continue
+    
+    # Debug information
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if openai_api_key:
+        key_preview = f"{openai_api_key[:5]}...{openai_api_key[-4:]}"
+        print(f"Loaded OPENAI_API_KEY from {env_path}: {key_preview}")
     else:
-        raise ValueError(f"Unknown router type {_type}")
+        print(f"Warning: Failed to load OPENAI_API_KEY from {env_path}")
+    
+    # Output model name
+    model_name = os.getenv("CHAT_MODEL", "")
+    print(f"Actual model name used: {model_name}")
 
+# Call the environment variable loading function
+load_env()
 
-async def ask_for_more_info(
-    state: AgentState, *, config: RunnableConfig
-) -> dict[str, list[BaseMessage]]:
-    """Generate a response asking the user for more information.
+TOP_K    = 15
+FINAL_K  = 5
+# Use complete version number for model name, based on test results
+LLM_MODEL = os.getenv("CHAT_MODEL", "gpt-4.1-mini-2025-04-14")
+print(f"LLM_MODEL value: {LLM_MODEL}")
 
-    This node is called when the router determines that more information is needed from the user.
+# Initialize OpenAI client
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    Args:
-        state (AgentState): The current state of the agent, including conversation history and router logic.
-        config (RunnableConfig): Configuration with the model used to respond.
+# —Hybrid Retrieval—
+def _hybrid(inputs: Dict) -> Dict:
+    q, vs = inputs["query"], inputs["vectorstore"]
+    dense = vs.similarity_search(q, k=TOP_K)
+    bm25  = BM25Retriever.from_documents(dense)
+    # Use invoke() instead of the deprecated get_relevant_documents()
+    sparse = bm25.invoke(q, config={"k": TOP_K})
+    docs = {d.page_content: d for d in dense + sparse}.values()
+    return {"docs": list(docs), "query": q}
 
-    Returns:
-        dict[str, list[str]]: A dictionary with a 'messages' key containing the generated response.
-    """
-    configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.query_model)
-    system_prompt = configuration.more_info_system_prompt.format(
-        logic=state.router["logic"]
-    )
-    messages = [{"role": "system", "content": system_prompt}] + state.messages
-    response = await model.ainvoke(messages)
-    return {"messages": [response]}
+# —Custom Cross-Encoder Reranking—
+def _rerank(inputs: Dict) -> Dict:
+    try:
+        # Directly use sentence_transformers CrossEncoder for reranking
+        docs = inputs["docs"]
+        query = inputs["query"]
+        
+        # Create CrossEncoder model
+        model = CrossEncoder('BAAI/bge-reranker-base')
+        
+        # Create document-query pairs for each document
+        doc_query_pairs = [(query, doc.page_content) for doc in docs]
+        
+        # Calculate relevance scores
+        scores = model.predict(doc_query_pairs)
+        
+        # Combine documents and scores, sort by score in descending order
+        doc_score_pairs = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
+        
+        # Get the top FINAL_K documents
+        best_docs = [doc for doc, _ in doc_score_pairs[:FINAL_K]]
+        
+        # To maintain interface consistency, create the same ctx and srcs return format
+        ctx = "\n\n---\n\n".join(d.page_content for d in best_docs)
+        
+        # Basic source information
+        srcs = [(d.metadata["file"], d.metadata.get("cid", 0)) for d in best_docs]
+        
+        # Detailed source information - including document content and metadata
+        detailed_sources = []
+        for doc, score in doc_score_pairs[:FINAL_K]:
+            detailed_sources.append({
+                "file": doc.metadata["file"],
+                "chunk_id": doc.metadata.get("cid", 0),
+                "content": doc.page_content,
+                "score": float(score),
+                "metadata": {k:v for k,v in doc.metadata.items() if k not in ["file", "cid"]}
+            })
+        
+        return {
+            "ctx": ctx, 
+            "srcs": srcs, 
+            "query": query,
+            "detailed_sources": detailed_sources
+        }
+    except Exception as e:
+        print(f"Error during reranking: {e}")
+        # If reranking fails, use the initial documents
+        docs = inputs["docs"][:FINAL_K]  # Simply take the first FINAL_K
+        ctx = "\n\n---\n\n".join(d.page_content for d in docs)
+        srcs = [(d.metadata["file"], d.metadata.get("cid", 0)) for d in docs]
+        
+        # Simple detailed source information
+        detailed_sources = []
+        for doc in docs:
+            detailed_sources.append({
+                "file": doc.metadata["file"],
+                "chunk_id": doc.metadata.get("cid", 0),
+                "content": doc.page_content,
+                "score": 0.0,  # No score
+                "metadata": {k:v for k,v in doc.metadata.items() if k not in ["file", "cid"]}
+            })
+            
+        return {
+            "ctx": ctx, 
+            "srcs": srcs, 
+            "query": inputs["query"],
+            "detailed_sources": detailed_sources
+        }
 
+# —Generation—
+def _generate(inputs: Dict) -> Dict:
+    try:
+        prompt = build_prompt("detailed", inputs["ctx"], inputs["query"])
+        # Get model name from environment again
+        model_name = os.getenv("CHAT_MODEL", "gpt-4.1-mini-2025-04-14")
+        print(f"Generating answer using model: {model_name}")
+        
+        # Check API key type
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if api_key.startswith("sk-proj-"):
+            print("Warning: You are using a project-specific API key (sk-proj-...), which may only access specific models")
+        
+        # Use OpenAI native SDK instead of langchain wrapper
+        try:
+            response = openai_client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": "You are a CDC Weekly Reports assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0
+            )
+            answer = response.choices[0].message.content.strip()
+            return {
+                "answer": answer, 
+                "sources": inputs["srcs"],
+                "detailed_sources": inputs.get("detailed_sources", [])
+            }
+        except Exception as model_error:
+            print(f"Model access error: {model_error}")
+            # Fallback solution not dependent on external API
+            summary = "Due to API limitations, unable to generate response using OpenAI model. Here is a summary of the relevant content:"
+            context_summary = inputs["ctx"][:500] + "..." if len(inputs["ctx"]) > 500 else inputs["ctx"]
+            return {
+                "answer": f"{summary}\n\n{context_summary}",
+                "sources": inputs["srcs"],
+                "detailed_sources": inputs.get("detailed_sources", [])
+            }
+    except Exception as e:
+        print(f"Error generating answer: {e}")
+        # If generation fails, return a friendly error message
+        return {
+            "answer": f"I'm sorry, I encountered a problem processing your query. This may be due to API limitations or connection issues. Error message: {str(e)}",
+            "sources": inputs["srcs"],
+            "detailed_sources": inputs.get("detailed_sources", [])
+        }
 
-async def respond_to_general_query(
-    state: AgentState, *, config: RunnableConfig
-) -> dict[str, list[BaseMessage]]:
-    """Generate a response to a general query not related to LangChain.
-
-    This node is called when the router classifies the query as a general question.
-
-    Args:
-        state (AgentState): The current state of the agent, including conversation history and router logic.
-        config (RunnableConfig): Configuration with the model used to respond.
-
-    Returns:
-        dict[str, list[str]]: A dictionary with a 'messages' key containing the generated response.
-    """
-    configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.query_model)
-    system_prompt = configuration.general_system_prompt.format(
-        logic=state.router["logic"]
-    )
-    messages = [{"role": "system", "content": system_prompt}] + state.messages
-    response = await model.ainvoke(messages)
-    return {"messages": [response]}
-
-
-async def create_research_plan(
-    state: AgentState, *, config: RunnableConfig
-) -> dict[str, list[str] | str]:
-    """Create a step-by-step research plan for answering a LangChain-related query.
-
-    Args:
-        state (AgentState): The current state of the agent, including conversation history.
-        config (RunnableConfig): Configuration with the model used to generate the plan.
-
-    Returns:
-        dict[str, list[str]]: A dictionary with a 'steps' key containing the list of research steps.
-    """
-
-    class Plan(TypedDict):
-        """Generate research plan."""
-
-        steps: list[str]
-
-    configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.query_model).with_structured_output(Plan)
-    messages = [
-        {"role": "system", "content": configuration.research_plan_system_prompt}
-    ] + state.messages
-    response = cast(Plan, await model.ainvoke(messages))
-    return {"steps": response["steps"], "documents": "delete"}
-
-
-async def conduct_research(state: AgentState) -> dict[str, Any]:
-    """Execute the first step of the research plan.
-
-    This function takes the first step from the research plan and uses it to conduct research.
-
-    Args:
-        state (AgentState): The current state of the agent, including the research plan steps.
-
-    Returns:
-        dict[str, list[str]]: A dictionary with 'documents' containing the research results and
-                              'steps' containing the remaining research steps.
-
-    Behavior:
-        - Invokes the researcher_graph with the first step of the research plan.
-        - Updates the state with the retrieved documents and removes the completed step.
-    """
-    result = await researcher_graph.ainvoke({"question": state.steps[0]})
-    return {"documents": result["documents"], "steps": state.steps[1:]}
-
-
-def check_finished(state: AgentState) -> Literal["respond", "conduct_research"]:
-    """Determine if the research process is complete or if more research is needed.
-
-    This function checks if there are any remaining steps in the research plan:
-        - If there are, route back to the `conduct_research` node
-        - Otherwise, route to the `respond` node
-
-    Args:
-        state (AgentState): The current state of the agent, including the remaining research steps.
-
-    Returns:
-        Literal["respond", "conduct_research"]: The next step to take based on whether research is complete.
-    """
-    if len(state.steps or []) > 0:
-        return "conduct_research"
-    else:
-        return "respond"
-
-
-async def respond(
-    state: AgentState, *, config: RunnableConfig
-) -> dict[str, list[BaseMessage]]:
-    """Generate a final response to the user's query based on the conducted research.
-
-    This function formulates a comprehensive answer using the conversation history and the documents retrieved by the researcher.
-
-    Args:
-        state (AgentState): The current state of the agent, including retrieved documents and conversation history.
-        config (RunnableConfig): Configuration with the model used to respond.
-
-    Returns:
-        dict[str, list[str]]: A dictionary with a 'messages' key containing the generated response.
-    """
-    configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.response_model)
-    context = format_docs(state.documents)
-    prompt = configuration.response_system_prompt.format(context=context)
-    messages = [{"role": "system", "content": prompt}] + state.messages
-    response = await model.ainvoke(messages)
-    return {"messages": [response]}
-
-
-# Define the graph
-builder = StateGraph(AgentState, input=InputState, config_schema=AgentConfiguration)
-builder.add_node(analyze_and_route_query)
-builder.add_node(ask_for_more_info)
-builder.add_node(respond_to_general_query)
-builder.add_node(conduct_research)
-builder.add_node(create_research_plan)
-builder.add_node(respond)
-
-builder.add_edge(START, "analyze_and_route_query")
-builder.add_conditional_edges("analyze_and_route_query", route_query)
-builder.add_edge("create_research_plan", "conduct_research")
-builder.add_conditional_edges("conduct_research", check_finished)
-builder.add_edge("ask_for_more_info", END)
-builder.add_edge("respond_to_general_query", END)
-builder.add_edge("respond", END)
-
-# Compile into a graph object that you can invoke and deploy.
-graph = builder.compile()
-graph.name = "RetrievalGraph"
+def build_chain():
+    return RunnableLambda(_hybrid) | RunnableLambda(_rerank) | RunnableLambda(_generate)

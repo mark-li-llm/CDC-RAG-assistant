@@ -30,6 +30,9 @@ For detailed configuration options and usage instructions, refer to the AgentCon
 and individual component documentation within the retrieval_graph package.
 """  # noqa
 
-from retrieval_graph.graph import graph
+# from retrieval_graph.graph import graph
 
-__all__ = ["graph"]
+# __all__ = ["graph"]
+
+from .graph import build_chain
+__all__ = ["build_chain"]
