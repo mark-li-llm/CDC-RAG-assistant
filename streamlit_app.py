@@ -77,6 +77,43 @@ def save_chat_history(query, answer, sources, session_id=None):
     
     print(f"Chat history saved to: {log_file}")
 
+# Load chat history
+def load_chat_history(days_back=7):
+    """
+    Load recent chat history from log files
+    
+    Parameters:
+        days_back: Number of days to look back for history
+    
+    Returns:
+        List of chat records sorted by timestamp (newest first)
+    """
+    logs_dir = os.path.join(root_dir, 'logs')
+    history_records = []
+    
+    if not os.path.exists(logs_dir):
+        return history_records
+    
+    # Get recent dates
+    for i in range(days_back):
+        date = datetime.datetime.now() - datetime.timedelta(days=i)
+        date_str = date.strftime("%Y-%m-%d")
+        log_file = os.path.join(logs_dir, f"chat_history_{date_str}.jsonl")
+        
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            record = json.loads(line.strip())
+                            history_records.append(record)
+            except Exception as e:
+                print(f"Error loading history from {log_file}: {e}")
+    
+    # Sort by timestamp (newest first)
+    history_records.sort(key=lambda x: x['timestamp'], reverse=True)
+    return history_records
+
 # Call the environment variable loading function
 load_env()
 
@@ -198,7 +235,6 @@ with st.sidebar:
     ]
     
     
-    
     def set_example_question(question):
         st.session_state.example_question = question
     
@@ -209,6 +245,53 @@ with st.sidebar:
     st.markdown("### System Information")
     st.markdown(f"Session ID: `{st.session_state.get('session_id', 'Not set')}`")
     st.markdown(f"Questions asked: `{len(st.session_state.get('history', []))//2}`")
+    
+    st.markdown("---")
+    st.markdown("### 📜 Recent Chat History")
+    
+    # Load and display recent chat history
+    try:
+        recent_history = load_chat_history(days_back=3)  # Show last 3 days
+        
+        if recent_history:
+            # Show total count
+            st.markdown(f"**Total recent conversations: {len(recent_history)}**")
+            
+            # Create expandable sections by date
+            history_by_date = {}
+            for record in recent_history:
+                date_str = record['timestamp'][:10]  # Extract date part (YYYY-MM-DD)
+                if date_str not in history_by_date:
+                    history_by_date[date_str] = []
+                history_by_date[date_str].append(record)
+            
+            # Display history grouped by date
+            for date_str in sorted(history_by_date.keys(), reverse=True):
+                day_records = history_by_date[date_str]
+                with st.expander(f"📅 {date_str} ({len(day_records)} questions)", expanded=(date_str == datetime.datetime.now().strftime("%Y-%m-%d"))):
+                    for i, record in enumerate(day_records[:10]):  # Show max 10 per day
+                        # Format timestamp
+                        time_str = record['timestamp'][11:19]  # Extract time part (HH:MM:SS)
+                        
+                        # Truncate long questions
+                        question = record['query']
+                        if len(question) > 60:
+                            question = question[:60] + "..."
+                        
+                        # Create clickable question
+                        if st.button(f"{time_str}: {question}", key=f"hist_{record['timestamp']}_{i}", help=f"Full question: {record['query']}"):
+                            # Set the clicked question as the example question
+                            st.session_state.example_question = record['query']
+                            st.rerun()
+                    
+                    if len(day_records) > 10:
+                        st.markdown(f"*... and {len(day_records) - 10} more questions*")
+        else:
+            st.markdown("*No recent chat history found*")
+            
+    except Exception as e:
+        st.markdown("*Error loading chat history*")
+        print(f"Error in chat history display: {e}")
 
 # Main content area
 st.markdown('<h1 class="main-header">📊 CDC Weekly Reports Intelligence System</h1>', unsafe_allow_html=True)
@@ -247,17 +330,13 @@ if "session_id" not in st.session_state:
 
 # Chat interface
 if "example_question" in st.session_state:
-    # 不能直接在chat_input中使用value参数，所以需要先显示问题，然后进行处理
     example = st.session_state.example_question
     query = st.chat_input("Enter your question...")
     
-    # 如果用户没有输入，就使用示例问题
     if not query and "processed_example" not in st.session_state:
         query = example
-        # 标记这个例子已经被处理，防止重复处理
         st.session_state.processed_example = True
         
-    # 清除示例问题，以便下次用户可以输入新问题
     if "processed_example" in st.session_state and st.session_state.processed_example:
         del st.session_state.example_question
         del st.session_state.processed_example
@@ -292,16 +371,14 @@ if query:
         with st.expander("📎 View Sources"):
             st.markdown('<p class="source-header">This answer draws from the following CDC documents:</p>', unsafe_allow_html=True)
             
-            # 去重处理：将(文件名, chunk ID)组合添加到集合中以去除重复
             unique_sources = []
             seen = set()
             for f, cid in sources:
-                source_key = f"{f}_{cid}"  # 创建唯一键
+                source_key = f"{f}_{cid}"  
                 if source_key not in seen:
                     seen.add(source_key)
                     unique_sources.append((f, cid))
             
-            # 显示去重后的源文件
             for f, cid in unique_sources:
                 st.markdown(f"- `{f}`  chunk {cid}")
 
