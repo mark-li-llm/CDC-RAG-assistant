@@ -1,10 +1,10 @@
 # CDC Weekly Reports RAG Intelligent Question‑Answering System
 
 <p align="center">
-  <video src="assets/demo.mp4" controls loop muted style="max-width:100%"></video>
+  <video src="demo.mp4" controls loop muted style="max-width:100%"></video>
 </p>
 
-![Demo Video](./assets/demo.mp4)
+![Demo Video](.demo.mp4)
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Latest-green.svg)](https://github.com/langchain-ai/langgraph)
