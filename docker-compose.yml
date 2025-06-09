@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  rag-app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      # OpenAI 配置
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CHAT_MODEL=${CHAT_MODEL:-gpt-4.1-nano}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-ada-002}
+      
+      # 云端 Qdrant 配置
+      - QDRANT_URL=${QDRANT_URL}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      
+      # LangSmith 追踪配置
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-1}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-rag-research-agent}
+      - LANGCHAIN_PROJECT=${LANGSMITH_PROJECT:-rag-research-agent}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+      
+      # 其他可选配置
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - FIREWORKS_API_KEY=${FIREWORKS_API_KEY}
+    volumes:
+      # 只挂载日志目录（移除qdrant_data，因为使用云端服务）
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3 
