@@ -4,7 +4,7 @@
   <video src="demo.mp4" controls loop muted style="max-width:100%"></video>
 </p>
 
-![Demo Video](demo.mp4)
+![Demo Video](demo.gif)
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Latest-green.svg)](https://github.com/langchain-ai/langgraph)
