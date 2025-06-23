@@ -1,0 +1,219 @@
+# RAG系统性能测试
+name: Performance Testing
+
+on:
+  schedule:
+    # Run performance tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'src/**'
+
+jobs:
+  performance-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run performance benchmarks
+      run: |
+        pytest tests/performance_tests/ --benchmark-only --benchmark-json=benchmark.json -v
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        QDRANT_URL: ${{ secrets.QDRANT_URL }}
+        QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+    
+    - name: Memory usage test
+      run: |
+        python tests/memory_test.py
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    - name: Quality assessment
+      run: |
+        python tests/quality_tests/test_retrieval_quality.py
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        QDRANT_URL: ${{ secrets.QDRANT_URL }}
+        QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+    
+    - name: Analyze benchmark results
+      run: |
+        if [ -f benchmark.json ]; then
+          echo "📊 Performance test results:"
+          python -c "
+        import json
+        with open('benchmark.json', 'r') as f:
+            data = json.load(f)
+        
+        print('Benchmark Results Summary:')
+        print('=' * 40)
+        
+        benchmarks = data.get('benchmarks', [])
+        for benchmark in benchmarks:
+            name = benchmark.get('name', 'Unknown')
+            mean = benchmark.get('stats', {}).get('mean', 0)
+            print(f'{name}: {mean:.4f} seconds')
+            
+            # Check if performance meets criteria
+            if 'single_query' in name and mean > 5.0:
+                print(f'⚠️  WARNING: {name} exceeds 5s threshold')
+            elif 'multiple_queries' in name and mean > 20.0:
+                print(f'⚠️  WARNING: {name} exceeds 20s threshold')
+        "
+        else
+          echo "❌ No benchmark results found"
+        fi
+    
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-results
+        path: |
+          benchmark.json
+          memory_report.txt
+          quality_results.json
+    
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          let comment = '## 🚀 Performance Test Results\n\n';
+          
+          // Add benchmark results if available
+          if (fs.existsSync('benchmark.json')) {
+            const benchmarkData = JSON.parse(fs.readFileSync('benchmark.json', 'utf8'));
+            comment += '### Benchmark Results\n';
+            
+            benchmarkData.benchmarks.forEach(benchmark => {
+              const name = benchmark.name;
+              const mean = benchmark.stats.mean.toFixed(4);
+              comment += `- **${name}**: ${mean} seconds\n`;
+            });
+          }
+          
+          // Add memory results if available
+          if (fs.existsSync('memory_report.txt')) {
+            const memoryData = fs.readFileSync('memory_report.txt', 'utf8');
+            const lines = memoryData.split('\n').slice(0, 10); // First 10 lines
+            comment += '\n### Memory Usage Summary\n```\n';
+            comment += lines.join('\n');
+            comment += '\n```\n';
+          }
+          
+          // Add quality results if available
+          if (fs.existsSync('quality_results.txt')) {
+            const qualityData = fs.readFileSync('quality_results.txt', 'utf8');
+            comment += '\n### Quality Assessment\n```\n';
+            comment += qualityData;
+            comment += '\n```\n';
+          }
+          
+          // Post comment
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  performance-regression-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Need full history for comparison
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run baseline performance test
+      run: |
+        # Switch to main branch for baseline
+        git checkout main
+        pytest tests/performance_tests/ --benchmark-only --benchmark-json=baseline.json -v || true
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    - name: Run current performance test
+      run: |
+        # Switch back to PR branch
+        git checkout ${{ github.head_ref }}
+        pytest tests/performance_tests/ --benchmark-only --benchmark-json=current.json -v || true
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    - name: Compare performance
+      run: |
+        python -c "
+        import json
+        import sys
+        
+        def load_benchmarks(filename):
+            try:
+                with open(filename, 'r') as f:
+                    data = json.load(f)
+                return {b['name']: b['stats']['mean'] for b in data.get('benchmarks', [])}
+            except FileNotFoundError:
+                return {}
+        
+        baseline = load_benchmarks('baseline.json')
+        current = load_benchmarks('current.json')
+        
+        print('Performance Comparison:')
+        print('=' * 50)
+        
+        regression_found = False
+        
+        for name in current:
+            if name in baseline:
+                baseline_time = baseline[name]
+                current_time = current[name]
+                change_pct = ((current_time - baseline_time) / baseline_time) * 100
+                
+                print(f'{name}:')
+                print(f'  Baseline: {baseline_time:.4f}s')
+                print(f'  Current:  {current_time:.4f}s')
+                print(f'  Change:   {change_pct:+.2f}%')
+                
+                if change_pct > 20:  # 20% regression threshold
+                    print(f'  ❌ REGRESSION DETECTED!')
+                    regression_found = True
+                elif change_pct < -10:  # 10% improvement
+                    print(f'  ✅ Performance improvement!')
+                print()
+        
+        if regression_found:
+            print('❌ Performance regression detected!')
+            sys.exit(1)
+        else:
+            print('✅ No significant performance regression')
+        " 
