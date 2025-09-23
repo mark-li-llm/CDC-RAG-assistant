@@ -1,37 +1,48 @@
-version: '3.8'
+x-rag-app-env: &rag-app-env
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  CHAT_MODEL: ${CHAT_MODEL:-gpt-4.1-nano}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-ada-002}
+  QDRANT_URL: ${QDRANT_URL:-}
+  QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+  LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-1}
+  LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-rag-research-agent}
+  LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-rag-research-agent}
+  LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+  LANGCHAIN_ENDPOINT: ${LANGCHAIN_ENDPOINT:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  FIREWORKS_API_KEY: ${FIREWORKS_API_KEY:-}
+
+x-rag-app-base: &rag-app-base
+  build:
+    context: .
+    target: runtime
+    args:
+      PYTHON_VERSION: ${PYTHON_VERSION:-3.11}
+      PRELOAD_MODELS: ${PRELOAD_MODELS:-0}
+  ports:
+    - "8501:8501"
+  environment: *rag-app-env
+  volumes:
+    - ./logs:/app/logs
+    - ./qdrant_data:/app/qdrant_data
+    - ./.env:/app/.env:ro
+    - ./.cache/huggingface:/home/app/.cache/huggingface
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
 
 services:
   rag-app:
-    build: .
-    ports:
-      - "8501:8501"
+    <<: *rag-app-base
+    profiles: ["cloud"]
+
+  rag-app-local:
+    <<: *rag-app-base
+    profiles: ["local"]
     environment:
-      # OpenAI 配置
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - CHAT_MODEL=${CHAT_MODEL:-gpt-4.1-nano}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-ada-002}
-      
-      # 云端 Qdrant 配置
-      - QDRANT_URL=${QDRANT_URL}
-      - QDRANT_API_KEY=${QDRANT_API_KEY}
-      
-      # LangSmith 追踪配置
-      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-1}
-      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-rag-research-agent}
-      - LANGCHAIN_PROJECT=${LANGSMITH_PROJECT:-rag-research-agent}
-      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
-      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
-      
-      # 其他可选配置
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - FIREWORKS_API_KEY=${FIREWORKS_API_KEY}
-    volumes:
-      # 只挂载日志目录（移除qdrant_data，因为使用云端服务）
-      - ./logs:/app/logs
-      - ./.env:/app/.env:ro
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3 
+      <<: *rag-app-env
+      QDRANT_URL:
+      QDRANT_API_KEY:

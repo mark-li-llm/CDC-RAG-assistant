@@ -10,6 +10,7 @@ __pycache__/
 # ===============
 .env
 .env.*
+!.env.example
 .venv/
 venv/
 env/
@@ -80,8 +81,8 @@ test_openai_models.py
 # ====================
 # Docker & Deployment
 # ====================
-Dockerfile
-docker-compose.yml
+#Dockerfile
+#docker-compose.yml
 
 # ====================
 # Configuration & Secrets
