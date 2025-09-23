@@ -63,6 +63,11 @@ docs/_build/
 
 # Logs (keep structure but not content)
 logs/*.jsonl
+logs/
+qdrant_data/
+tests/
+demo.gif
+demo.mp4
 
 # Temporary files
 *.tmp

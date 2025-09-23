@@ -1,4 +1,5 @@
-.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests
+.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests \
+	docker-build docker-up docker-up-local docker-down docker-logs docker-rebuild
 
 # Default target executed when no arguments are given to make.
 all: help
@@ -32,6 +33,8 @@ lint_package: PYTHON_FILES=src
 lint_tests: PYTHON_FILES=tests
 lint_tests: MYPY_CACHE=.mypy_cache_test
 
+DOCKER_PROFILE ?= cloud
+
 lint lint_diff lint_package lint_tests:
 	python -m ruff check .
 	[ "$(PYTHON_FILES)" = "" ] || python -m ruff format $(PYTHON_FILES) --diff
@@ -61,4 +64,29 @@ help:
 	@echo 'tests                        - run unit tests'
 	@echo 'test TEST_FILE=<test_file>   - run all tests in file'
 	@echo 'test_watch                   - run unit tests in watch mode'
+	@echo 'docker-build                 - build docker image'
+	@echo 'docker-up                    - start cloud profile (default)'
+	@echo 'docker-up-local              - start embedded qdrant profile'
+	@echo 'docker-down                  - stop and remove containers'
+	@echo 'docker-logs                  - tail application logs'
+	@echo 'docker-rebuild               - clean rebuild, drop volumes'
 
+docker-build:
+	docker compose --profile $(DOCKER_PROFILE) build
+
+docker-up:
+	docker compose --profile $(DOCKER_PROFILE) up -d --build
+
+docker-up-local:
+	DOCKER_PROFILE=local $(MAKE) docker-up
+
+docker-down:
+	docker compose --profile $(DOCKER_PROFILE) down
+
+docker-logs:
+	docker compose --profile $(DOCKER_PROFILE) logs -f
+
+docker-rebuild:
+	docker compose --profile $(DOCKER_PROFILE) down --volumes
+	docker compose --profile $(DOCKER_PROFILE) build --no-cache
+	docker compose --profile $(DOCKER_PROFILE) up -d

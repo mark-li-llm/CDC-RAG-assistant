@@ -33,19 +33,22 @@ Built with **LangGraph**, this **enterprise‑grade Retrieval‑Augmented Genera
 ## 🏗️ System Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Streamlit     │    │   LangGraph      │    │   Vector DB     │
-│   Web UI        │◄──►│   State Machine  │◄──►│   Qdrant Cloud  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   User Layer    │    │   Retrieval Graph│    │   Document Index│
-│   - Question    │    │   - Query Gen    │    │   - Chunking    │
-│   - History     │    │   - Hybrid Search│    │   - Embeddings  │
-│   - Citations   │    │   - Re‑ranking   │    │   - Metadata    │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+┌─────────────────┐      ┌──────────────────┐
+│   Streamlit     │ ◄──► │   LangGraph      │
+│   Web UI        │      │   State Machine  │
+└─────────────────┘      └──────────────────┘
+           │                          │
+           │                          ├─────────────► OpenAI API (cloud)
+           │                          │
+           │                          └─────────────► Nginx (LLM Gateway) ──► vLLM #1
+           │                                                          └───► vLLM #2
+           │
+           └──────────────────────────────────────► Vector DB (Qdrant: cloud or embedded)
 ```
+
+### LLM Backends
+- Cloud path: direct calls to OpenAI API (default).
+- Self‑hosted path: Nginx reverse proxy routes requests to two vLLM services (OpenAI‑compatible API). Switch by setting `OPENAI_BASE_URL` to the Nginx endpoint.
 
 ### 🔄 **Retrieval Workflow**
 
@@ -63,6 +66,8 @@ Built with **LangGraph**, this **enterprise‑grade Retrieval‑Augmented Genera
 | **Frontend**        | Streamlit               | Modern web UI + custom CSS                      |
 | **AI Framework**    | LangGraph               | Multi‑graph state‑machine + async orchestration |
 | **LLM**             | OpenAI GPT‑4.1          | Answer generation + query understanding         |
+| **LLM Gateway**     | Nginx                   | Reverse proxy, OpenAI‑compatible routing to vLLM|
+| **Self‑Hosted LLM** | vLLM (x2 services)      | On‑server inference, OpenAI‑compatible API      |
 | **Embedding Model** | text‑embedding‑ada‑002  | Document vectorisation                          |
 | **Vector DB**       | Qdrant Cloud            | High‑performance vector storage & search        |
 | **Re‑ranking**      | BAAI/bge‑reranker‑base  | Cross‑Encoder semantic re‑ranking               |
@@ -80,36 +85,46 @@ git clone <your-repo-url>
 cd rag_0508
 ```
 
-2. **Configure environment variables**
+2. **Copy and edit environment variables**
 
 ```bash
-# Create .env
-cat > .env << 'EOF'
-CHAT_MODEL=gpt-4.1-nano
-OPENAI_API_KEY=your-openai-api-key
-QDRANT_URL=https://your-qdrant-url.cloud.qdrant.io:6333
-QDRANT_API_KEY=your-qdrant-api-key
-LANGSMITH_PROJECT=rag-research-agent
-LANGCHAIN_TRACING_V2=1
-EMBEDDING_MODEL=text-embedding-ada-002
-EOF
+cp .env.example .env
 ```
 
-3. **Start the app**
+Fill in your keys (at minimum `OPENAI_API_KEY`, and `QDRANT_URL`/`QDRANT_API_KEY` when using Qdrant Cloud).
+
+3. **Choose runtime mode**
+
+
+*Cloud Qdrant (default)* — keep `COMPOSE_PROFILES=cloud` in `.env`.
+
+*Local embedded Qdrant* — set `COMPOSE_PROFILES=local` in `.env` (or export it) and ensure `qdrant_data/` exists on the host.
+
+> Use self‑hosted LLM via Nginx: point the app to your Nginx OpenAI‑compatible endpoint by setting `OPENAI_BASE_URL` (e.g., `http://<nginx-host>:8081/v1`) and set `CHAT_MODEL` to the model name loaded by vLLM. Leave `OPENAI_BASE_URL` empty to use OpenAI cloud.
+
+4. **Build and run the container**
 
 ```bash
-# Build and run
-docker-compose up --build
+# Cloud profile (default)
+make docker-up
+# or
+docker compose --profile cloud up -d --build
 
-# Run in background
-docker-compose up -d --build
+# Local profile (embedded Qdrant)
+make docker-up-local
+# or
+docker compose --profile local up -d --build
 ```
 
-4. **Open in browser**
+> Tip: set `PRELOAD_MODELS=1` in `.env` before building if you want the Docker image to pre-download the `BAAI/bge-reranker-base` model.
+
+5. **Open in browser**
 
 ```
 http://localhost:8501
 ```
+
+Use `make docker-logs` (or `docker compose --profile cloud logs -f`) to tail the container logs. Run `make docker-down` to stop the active profile, or `DOCKER_PROFILE=local make docker-down` when the embedded Qdrant profile is running.
 
 ### Method 2: Local Development
 
@@ -201,8 +216,13 @@ QDRANT_URL=your-qdrant-url
 QDRANT_API_KEY=your-qdrant-key
 
 # Model config
-CHAT_MODEL=gpt-4.1-nano
+CHAT_MODEL=gpt-4.1-nano             # Or your vLLM model name
 EMBEDDING_MODEL=text-embedding-ada-002
+
+# LLM backend selection
+# When set, requests go to your Nginx gateway (OpenAI-compatible) which proxies to vLLM.
+# When empty or unset, requests go to OpenAI cloud.
+OPENAI_BASE_URL=
 
 # Optional
 LANGSMITH_PROJECT=your-project
@@ -304,4 +324,3 @@ MIT License – see [LICENSE](LICENSE)
 ---
 
 **⭐ If this project is helpful, please give it a star!**
-
