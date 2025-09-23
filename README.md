@@ -7,17 +7,17 @@
 ![Demo Video](demo.gif)
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Latest-green.svg)](https://github.com/langchain-ai/langgraph)
+[![LangChain](https://img.shields.io/badge/LangChain-Latest-green.svg)](https://github.com/langchain-ai/langchain)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.33+-red.svg)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
 
-Built with **LangGraph**, this **enterprise‑grade Retrieval‑Augmented Generation (RAG) QA system** is optimised for CDC Weekly Reports data. It features a multi‑graph state‑machine architecture and integrates hybrid retrieval with smart re‑ranking.
+Built with **LangChain**, this **enterprise‑grade Retrieval‑Augmented Generation (RAG) QA system** is optimised for CDC Weekly Reports data. It features a modular pipeline and integrates hybrid retrieval with smart re‑ranking.
 
 ## 🎯 Project Highlights
 
 ### 🚀 **Core Technical Highlights**
 
-* **Multi‑graph state‑machine architecture**: Index Graph + Retrieval Graph + Researcher SubGraph (LangGraph)
+* **Modular pipeline architecture**: Indexing + Retrieval + Research sub‑pipeline (LangChain)
 * **Hybrid retrieval optimisation**: Dense Vector Search + BM25 Sparse Search + Cross‑Encoder re‑ranking
 * **Asynchronous parallel processing**: Multi‑query parallel retrieval for faster responses
 * **Cloud‑native deployment**: Qdrant Cloud + Docker containers
@@ -34,8 +34,8 @@ Built with **LangGraph**, this **enterprise‑grade Retrieval‑Augmented Genera
 
 ```
 ┌─────────────────┐      ┌──────────────────┐
-│   Streamlit     │ ◄──► │   LangGraph      │
-│   Web UI        │      │   State Machine  │
+│   Streamlit     │ ◄──► │   LangChain App  │
+│   Web UI        │      │   Orchestration  │
 └─────────────────┘      └──────────────────┘
            │                          │
            │                          ├─────────────► OpenAI API (cloud)
@@ -64,7 +64,7 @@ Built with **LangGraph**, this **enterprise‑grade Retrieval‑Augmented Genera
 | Layer               | Component               | Description                                     |
 | ------------------- | ----------------------- | ----------------------------------------------- |
 | **Frontend**        | Streamlit               | Modern web UI + custom CSS                      |
-| **AI Framework**    | LangGraph               | Multi‑graph state‑machine + async orchestration |
+| **AI Framework**    | LangChain               | Runnables pipeline + async orchestration        |
 | **LLM**             | OpenAI GPT‑4.1          | Answer generation + query understanding         |
 | **LLM Gateway**     | Nginx                   | Reverse proxy, OpenAI‑compatible routing to vLLM|
 | **Self‑Hosted LLM** | vLLM (x2 services)      | On‑server inference, OpenAI‑compatible API      |
@@ -310,13 +310,9 @@ make lint
 
 
 
-## 📄 License
-
-MIT License – see [LICENSE](LICENSE)
-
 ## 🙏 Acknowledgments
 
-* [LangGraph](https://github.com/langchain-ai/langgraph) – powerful state‑machine framework
+* [LangChain](https://github.com/langchain-ai/langchain) – composable LLM application framework
 * [Streamlit](https://streamlit.io/) – elegant web app framework
 * [Qdrant](https://qdrant.tech/) – high‑performance vector DB
 * [OpenAI](https://openai.com/) – advanced AI models

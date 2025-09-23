@@ -16,17 +16,11 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY requirements.txt pyproject.toml ./
-COPY src ./src
-COPY streamlit_app.py ./
-COPY scripts ./scripts
-COPY static ./static
-COPY README.md langgraph.json ./
+COPY requirements.txt ./
 
 RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
-    /opt/venv/bin/pip install -r requirements.txt && \
-    /opt/venv/bin/pip install .
+    /opt/venv/bin/pip install -r requirements.txt
 
 ARG PRELOAD_MODELS=0
 RUN if [ "$PRELOAD_MODELS" = "1" ]; then \
@@ -60,9 +54,8 @@ COPY src ./src
 COPY streamlit_app.py ./
 COPY scripts ./scripts
 COPY static ./static
-COPY README.md langgraph.json ./
+COPY README.md ./
 COPY requirements.txt ./
-COPY pyproject.toml ./
 
 RUN mkdir -p /app/logs /app/qdrant_data "$HF_HOME" && \
     chown -R app:app /app /home/app
