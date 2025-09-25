@@ -123,3 +123,4 @@ docs/_build/
 *.txt               # Ignore all plain text files
 data/
 static/uploads/     # Add any other paths if needed
+worktree/
